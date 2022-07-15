@@ -9,8 +9,15 @@ import ImagePopup from "./ImagePopup";
 import ConfirmPopup from "./ConfirmPopup";
 import { CurrentUserContext } from "../contexts/CurrentUserContext";
 import api from "../utils/Api";
+import * as auth from "../utils/auth";
+import { Route, Routes, useNavigate, Navigate } from "react-router-dom";
+import Login from "./Login";
+import Register from "./Register";
+import InfoTooltip from "./InfoTooltip";
+import ProtectedRoute from "./ProtectedRoute";
 
 function App() {
+  const navigate = useNavigate();
   const [isEditProfilePopupOpen, setIsEditProfilePopupOpen] = useState(false);
   const [isAddPlacePopupOpen, setIsAddPlacePopupOpen] = useState(false);
   const [isEditAvatarPopupOpen, setIsEditAvatarPopupOpen] = useState(false);
@@ -20,26 +27,88 @@ function App() {
   const [currentUser, setCurrentUser] = useState({});
   const [cards, setCards] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isInfoToolTipOpen, setIsInfoToolTipOpen] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [isRegistered, setIsRegistered] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
 
   useEffect(() => {
-    Promise.all([api.getProfile(), api.getCards()])
-      .then(([userData, userCard]) => {
-        setCurrentUser(userData);
-        setCards(userCard);
-      })
-      .catch((err) => console.log(`Ошибка: ${err}`));
+    checkToken();
   }, []);
 
   useEffect(() => {
-    const handleEscClose = (evt) => {
-      if (evt.key === "Escape") {
-        closeAllPopups();
-      }
-    };
+    if (loggedIn) {
+      navigate("/");
+    }
+  }, [loggedIn, navigate]);
 
-    document.addEventListener("keydown", handleEscClose);
-    return () => document.removeEventListener("keydown", handleEscClose);
-  });
+  useEffect(() => {
+    if (loggedIn) {
+      Promise.all([api.getProfile(), api.getCards()])
+        .then(([userData, userCard]) => {
+          setCurrentUser(userData);
+          setCards(userCard);
+        })
+        .catch((err) => console.log(`Ошибка: ${err}`));
+    }
+  }, [loggedIn]);
+
+  function checkToken() {
+    const jwt = localStorage.getItem("jwt");
+    if (jwt) {
+      auth
+        .getToken(jwt)
+        .then((res) => {
+          if (res.data.email) {
+            setLoggedIn(true);
+            setUserEmail(res.data.email);
+          }
+        })
+        .catch((err) => console.log(`Ошибка: ${err}`));
+    }
+  }
+
+  function handleLogin(email, password) {
+    auth
+      .login({ email, password })
+      .then((res) => {
+        if (res.token) {
+          localStorage.setItem("jwt", res.token);
+        }
+        setLoggedIn(true);
+        setUserEmail(email);
+      })
+      .catch((err) => {
+        console.log(`Ошибка: ${err}`);
+        setIsInfoToolTipOpen(true);
+        setIsRegistered(false);
+      });
+  }
+
+  function handleRegister(email, password) {
+    auth
+      .register({ email, password })
+      .then((data) => {
+        if (data.email) {
+          localStorage.setItem("jwt", data.token);
+          setUserEmail(email);
+        }
+        setIsRegistered(true);
+        setIsInfoToolTipOpen(true);
+        navigate("/sign-in");
+      })
+      .catch((err) => {
+        console.log(`Ошибка: ${err}`);
+        setIsRegistered(false);
+        setIsInfoToolTipOpen(true);
+      });
+  }
+
+  function handleLogOut() {
+    setLoggedIn(false);
+    localStorage.removeItem("jwt");
+    navigate("/sign-in");
+  }
 
   function handleEditProfileClick() {
     setIsEditProfilePopupOpen(true);
@@ -123,7 +192,19 @@ function App() {
       .finally(() => setIsLoading(false));
   }
 
+  useEffect(() => {
+    const handleEscClose = (evt) => {
+      if (evt.key === "Escape") {
+        closeAllPopups();
+      }
+    };
+
+    document.addEventListener("keydown", handleEscClose);
+    return () => document.removeEventListener("keydown", handleEscClose);
+  });
+
   function closeAllPopups() {
+    setIsInfoToolTipOpen(false);
     setIsEditProfilePopupOpen(false);
     setIsAddPlacePopupOpen(false);
     setIsEditAvatarPopupOpen(false);
@@ -135,17 +216,45 @@ function App() {
   return (
     <div className="page">
       <CurrentUserContext.Provider value={currentUser}>
-        <Header />
-        <Main
-          onEditProfile={handleEditProfileClick}
-          onAddPlace={handleAddPlaceClick}
-          onEditAvatar={handleEditAvatarClick}
-          onCardClick={handleCardClick}
-          onCardLike={handleCardLike}
-          onCardDelete={handleDeleteCardClick}
-          cards={cards}
+        <Header
+          userEmail={userEmail}
+          loggedIn={loggedIn}
+          handleLogOut={handleLogOut}
         />
-        <Footer />
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute
+                component={Main}
+                loggedIn={loggedIn}
+                onEditProfile={handleEditProfileClick}
+                onAddPlace={handleAddPlaceClick}
+                onEditAvatar={handleEditAvatarClick}
+                onCardClick={handleCardClick}
+                onCardLike={handleCardLike}
+                onCardDelete={handleDeleteCardClick}
+                cards={cards}
+              />
+            }
+          />
+          <Route
+            path="*"
+            element={
+              loggedIn ? <Navigate to="/" /> : <Navigate to="/sign-in" />
+            }
+          />
+          <Route
+            path="/sign-in"
+            element={<Login handleLogin={handleLogin} />}
+          />
+          <Route
+            path="/sign-up"
+            element={<Register handleRegister={handleRegister} />}
+          />
+        </Routes>
+
+        {loggedIn ? <Footer /> : null}
 
         <EditProfilePopup
           isOpen={isEditProfilePopupOpen}
@@ -174,6 +283,12 @@ function App() {
           onCardDelete={handleCardDelete}
           card={deletedCard}
           isLoading={isLoading}
+        />
+
+        <InfoTooltip
+          isOpen={isInfoToolTipOpen}
+          onClose={closeAllPopups}
+          isRegistered={isRegistered}
         />
 
         <ImagePopup card={selectedCard} onClose={closeAllPopups} />
